@@ -1,20 +1,46 @@
 import React, { useState, useEffect, useRef } from 'react';
+import type { BackgroundMode } from './CameraOverlay';
 
 interface BackgroundVideoProps {
     apiUrl: string;
     playing: boolean;
     videoId?: string | null;
     videoEnabled?: boolean;
+    backgroundMode?: BackgroundMode;
+    backgroundImage?: string | null;
     songTitle?: string;
     songArtist?: string;
     accentColor?: string;
 }
+
+const BACKGROUND_IMAGES = [
+    { id: 'bg_01', label: 'Karaoke Stage', src: '/backgrounds/bg_01.png' },
+    { id: 'bg_02', label: 'Neon Bar', src: '/backgrounds/bg_02.png' },
+    { id: 'bg_03', label: 'Sound Waves', src: '/backgrounds/bg_03.png' },
+    { id: 'bg_04', label: 'Aurora', src: '/backgrounds/bg_04.png' },
+    { id: 'bg_05', label: 'Synthwave', src: '/backgrounds/bg_05.png' },
+    { id: 'bg_06', label: 'Rock Concert', src: '/backgrounds/bg_06.png' },
+    { id: 'bg_07', label: 'Disco Night', src: '/backgrounds/bg_07.jpg' },
+    { id: 'bg_08', label: 'Club Lights', src: '/backgrounds/bg_08.jpg' },
+    { id: 'bg_09', label: 'Galaxy', src: '/backgrounds/bg_09.jpg' },
+    { id: 'bg_10', label: 'Festival', src: '/backgrounds/bg_10.jpg' },
+    { id: 'bg_11', label: 'Pop Stage', src: '/backgrounds/bg_11.jpg' },
+    { id: 'bg_12', label: 'Live Show', src: '/backgrounds/bg_12.jpg' },
+    { id: 'bg_13', label: 'Spotlights', src: '/backgrounds/bg_13.jpg' },
+    { id: 'bg_14', label: 'Piano Bar', src: '/backgrounds/bg_14.jpg' },
+    { id: 'bg_15', label: 'Night Club', src: '/backgrounds/bg_15.jpg' },
+];
+
+// Export for use in tablet settings screen metadata
+export { BACKGROUND_IMAGES };
 
 export const BackgroundVideo: React.FC<BackgroundVideoProps> = ({
     apiUrl,
     playing,
     videoId,
     videoEnabled = true,
+    backgroundMode = 'video',
+    backgroundImage = null,
     songTitle,
     songArtist,
     accentColor = '#00ffff'
@@ -61,7 +87,6 @@ export const BackgroundVideo: React.FC<BackgroundVideoProps> = ({
         if (videos.length === 0) return;
 
         if (videoId) {
-            // Match against display_name OR filename
             const video = videos.find(v => v.display_name === videoId || v.filename === videoId);
             if (video) {
                 const videoUrl = video.url.startsWith('http')
@@ -80,27 +105,46 @@ export const BackgroundVideo: React.FC<BackgroundVideoProps> = ({
     const videoEnabledRef = useRef(videoEnabled);
     useEffect(() => { videoEnabledRef.current = videoEnabled; }, [videoEnabled]);
 
-    // When videoEnabled turns false, pause; when it turns true, resume if video is ready
     useEffect(() => {
         if (!videoRef.current) return;
-        if (!videoEnabled) {
+        if (!videoEnabled || backgroundMode !== 'video') {
             videoRef.current.pause();
         } else {
-            // Resume if the video is already loaded (readyState >= 3 means HAVE_FUTURE_DATA)
             if (videoRef.current.readyState >= 3) {
                 videoRef.current.play().catch(e => console.warn('[BackgroundVideo] Play failed:', e));
             }
-            // Otherwise onCanPlay will trigger play() when data is ready
         }
-    }, [videoEnabled]);
+    }, [videoEnabled, backgroundMode]);
 
     const handleCanPlay = () => {
-        if (videoEnabledRef.current && videoRef.current) {
+        if (videoEnabledRef.current && backgroundMode === 'video' && videoRef.current) {
             videoRef.current.play().catch(e => console.warn('[BackgroundVideo] Play failed:', e));
         }
     };
 
-    if (!videoEnabled) {
+    // ── Static image mode ──
+    if (backgroundMode === 'image' && backgroundImage) {
+        const imgEntry = BACKGROUND_IMAGES.find(b => b.id === backgroundImage);
+        const imgSrc = imgEntry?.src || backgroundImage;
+        return (
+            <div className="fixed inset-0 z-0 overflow-hidden bg-black">
+                <img
+                    src={imgSrc}
+                    alt="Background"
+                    className="w-full h-full object-cover opacity-85"
+                />
+                <div className="absolute inset-0 bg-gradient-to-b from-black/20 via-transparent to-black/40" />
+            </div>
+        );
+    }
+
+    // ── Camera or None mode — dark base (CameraOverlay renders itself) ──
+    if (backgroundMode === 'camera' || backgroundMode === 'none') {
+        return <div className="fixed inset-0 z-0 bg-[#050505]" />;
+    }
+
+    // ── Video disabled fallback ──
+    if (!videoEnabled || backgroundMode !== 'video') {
         return (
             <div className="fixed inset-0 z-0 overflow-hidden bg-[#0a0a0a]">
                 <div
@@ -109,13 +153,11 @@ export const BackgroundVideo: React.FC<BackgroundVideoProps> = ({
                         background: `radial-gradient(circle at center, ${accentColor}15 0%, #0a0a0a 70%)`
                     }}
                 >
-                    {/* Animated glow */}
                     <div
                         className={`w-[350px] h-[350px] rounded-full blur-[80px] transition-opacity duration-1000 ${playing ? 'opacity-40 animate-pulse' : 'opacity-20'}`}
                         style={{ backgroundColor: accentColor }}
                     />
 
-                    {/* Song Info */}
                     <div className="absolute inset-0 flex flex-col items-center justify-center px-10 text-center">
                         <h2
                             className="text-[42px] font-black text-white uppercase tracking-wider drop-shadow-[0_0_20px_rgba(0,0,0,0.5)]"
@@ -151,7 +193,6 @@ export const BackgroundVideo: React.FC<BackgroundVideoProps> = ({
                 onCanPlay={handleCanPlay}
                 onEnded={() => !videoId && pickRandom()}
             />
-            {/* Subtle gradient overlay instead of solid dark overlay */}
             <div className="absolute inset-0 bg-gradient-to-b from-black/20 via-transparent to-black/40" />
         </div>
     );

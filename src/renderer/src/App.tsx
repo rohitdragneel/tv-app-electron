@@ -6,6 +6,8 @@ import type { LyricLine } from './utils/lrcParser';
 import { WebSocketService } from './services/websocket';
 import type { SongConfig } from './types';
 import { BackgroundVideo } from './components/BackgroundVideo';
+import { CameraOverlay } from './components/CameraOverlay';
+import type { BackgroundMode } from './components/CameraOverlay';
 import { ScoringBar } from './components/ScoringBar';
 import { MicStatus } from './components/MicStatus';
 import { SessionOverlay } from './components/SessionOverlay';
@@ -36,6 +38,9 @@ export default function App() {
   const [videoEnabled, setVideoEnabled] = useState(true);
   const [accentColor, setAccentColor] = useState('#00ffff');
   const [deviceId, setDeviceId] = useState<string | null>(null);
+  const [cameraEnabled, setCameraEnabled] = useState(false);
+  const [backgroundMode, setBackgroundMode] = useState<BackgroundMode>('video');
+  const [backgroundImage, setBackgroundImage] = useState<string | null>(null);
 
   const positionRef = useRef(0);
   const isPlayingRef = useRef(false);
@@ -233,6 +238,18 @@ export default function App() {
           setVideoEnabled(data.enabled);
           break;
 
+        case 'SET_CAMERA_ENABLED':
+          setCameraEnabled(data.enabled);
+          break;
+
+        case 'SET_BACKGROUND_MODE':
+          setBackgroundMode(data.mode as BackgroundMode);
+          break;
+
+        case 'SET_BACKGROUND_IMAGE':
+          setBackgroundImage(data.image);
+          break;
+
         case 'SET_ACCENT_COLOR':
           setAccentColor(data.color);
           break;
@@ -289,9 +306,17 @@ export default function App() {
         playing={isPlaying}
         videoId={currentSong?.video_id}
         videoEnabled={videoEnabled}
+        backgroundMode={backgroundMode}
+        backgroundImage={backgroundImage}
         songTitle={currentSong?.title}
         songArtist={currentSong?.artist}
         accentColor={accentColor}
+      />
+
+      {/* Camera overlay (person segmentation or full feed) */}
+      <CameraOverlay
+        enabled={cameraEnabled}
+        backgroundMode={backgroundMode}
       />
 
       {/* Session overlay (QR code, fixed top-left) */}
