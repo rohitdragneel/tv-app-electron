@@ -38,30 +38,30 @@ export const LyricRenderer: React.FC<LyricRendererProps> = ({
     if (primaryLyrics.length === 0) return null;
 
     return (
-        <div className="absolute bottom-[60px] left-0 right-0 flex flex-col items-center px-10">
-            <div className="flex flex-col items-center w-[85%] text-center">
+        <div className="w-full flex flex-col items-center px-16 pb-8 text-center">
+            <div className="flex flex-col items-center w-[90%]">
                 {/* Secondary language */}
                 {currentSecondary && (
-                    <p className="text-white/70 text-xl font-semibold mb-1.5 font-sans drop-shadow-[0_1px_6px_rgba(0,0,0,0.8)]">
+                    <p className="text-white/70 text-xl font-semibold mb-2 font-sans drop-shadow-[0_1px_6px_rgba(0,0,0,0.8)]">
                         {currentSecondary}
                     </p>
                 )}
 
                 {/* Tertiary language */}
                 {currentTertiary && (
-                    <p className="text-white/50 text-base font-medium mb-1 font-sans drop-shadow-[0_1px_4px_rgba(0,0,0,0.8)]">
+                    <p className="text-white/50 text-base font-medium mb-1.5 font-sans drop-shadow-[0_1px_4px_rgba(0,0,0,0.8)]">
                         {currentTertiary}
                     </p>
                 )}
 
                 {/* Primary lyrics */}
-                <h1 className="text-white text-[38px] leading-[48px] font-black drop-shadow-[0_2px_8px_rgba(0,0,0,0.9)] uppercase">
+                <h1 className="text-white text-[42px] leading-[52px] font-black drop-shadow-[0_2px_8px_rgba(0,0,0,0.9)] uppercase tracking-wide">
                     {currentPrimary || '♪'}
                 </h1>
 
                 {/* Next line preview */}
                 {nextPrimary && (
-                    <p className="text-white/30 text-[22px] font-semibold mt-3 font-sans drop-shadow-[0_1px_4px_rgba(0,0,0,0.6)]">
+                    <p className="text-white/30 text-2xl font-semibold mt-4 font-sans drop-shadow-[0_1px_4px_rgba(0,0,0,0.6)]">
                         {nextPrimary}
                     </p>
                 )}

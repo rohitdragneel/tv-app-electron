@@ -27,6 +27,7 @@ export default function App() {
   const [secLyrics, setSecLyrics] = useState<LyricLine[]>([]);
   const [terLyrics, setTerLyrics] = useState<LyricLine[]>([]);
   const [currentSong, setCurrentSong] = useState<SongConfig | null>(null);
+  const [duration, setDuration] = useState(0);
 
   const [score, setScore] = useState(0);
   const [players, setPlayers] = useState<string[]>([]);
@@ -34,18 +35,15 @@ export default function App() {
   const [sessionId, setSessionId] = useState<number | null>(null);
   const [videoEnabled, setVideoEnabled] = useState(true);
   const [accentColor, setAccentColor] = useState('#00ffff');
-  const [playCommandQueued, setPlayCommandQueued] = useState(false);
   const [deviceId, setDeviceId] = useState<string | null>(null);
 
   const positionRef = useRef(0);
   const isPlayingRef = useRef(false);
   const currentSongRef = useRef<SongConfig | null>(null);
+  const durationRef = useRef(0);
+  const isLoadedRef = useRef(false);
   const scoreRef = useRef(0);
-
-  useEffect(() => { positionRef.current = position; }, [position]);
-  useEffect(() => { isPlayingRef.current = isPlaying; }, [isPlaying]);
-  useEffect(() => { currentSongRef.current = currentSong; }, [currentSong]);
-  useEffect(() => { scoreRef.current = score; }, [score]);
+  const playCommandQueuedRef = useRef(false);
 
   const handleRecordingComplete = useCallback(async (blobUrl: string) => {
     if (!currentSong) return;
@@ -97,22 +95,31 @@ export default function App() {
     requestPermission
   } = useAudioEngine({
     onPositionUpdate: setPosition,
-    onDurationUpdate: () => { }, // Not used in UI yet
+    onDurationUpdate: setDuration,
     onPlaybackStatusUpdate: setIsPlaying,
     onRecordingComplete: handleRecordingComplete,
     ...audioSettings,
   });
 
+  useEffect(() => { positionRef.current = position; }, [position]);
+  useEffect(() => { isPlayingRef.current = isPlaying; }, [isPlaying]);
+  useEffect(() => { currentSongRef.current = currentSong; }, [currentSong]);
+  useEffect(() => { durationRef.current = duration; }, [duration]);
+  useEffect(() => { isLoadedRef.current = isLoaded; }, [isLoaded]);
+  useEffect(() => { scoreRef.current = score; }, [score]);
+
   const wsRef = useRef<WebSocketService | null>(null);
 
   useEffect(() => {
     const interval = setInterval(() => {
-      if (!isLoaded || !wsRef.current) return;
+      if (!wsRef.current) return;
 
       const song = currentSongRef.current;
       wsRef.current.send({
         type: 'STATE',
+        is_loaded: isLoadedRef.current,
         position: positionRef.current / 1000,
+        duration: durationRef.current / 1000,
         playing: isPlayingRef.current,
         stems: song?.stems,
         song_id: song?.id,
@@ -126,102 +133,130 @@ export default function App() {
   }, [isLoaded]);
 
   const handleMessage = useCallback(async (data: any) => {
-    console.log(`[TV] handleMessage: type=${data.type}`);
-    switch (data.type) {
-      case 'LOAD_SONG':
-        const song: SongConfig = data.song;
-        setCurrentSong(song);
-        setScore(0);
-        setPlayers(data.players || []);
-        setIsMultiplayer(data.is_multiplayer || false);
+    try {
+      console.log(`[TV] handleMessage: type=${data.type}`, data);
+      switch (data.type) {
+        case 'JOIN_SUCCESS':
+          console.log(`[TV] Successfully joined room: ${data.roomId}`);
+          break;
 
-        const rawSelection = data.song.lyricSelection || {};
-        const primaryLang = rawSelection.primary || song.language || 'en';
-        const secondaryLang = rawSelection.secondary || null;
-        const tertiaryLang = rawSelection.tertiary || null;
+        case 'ERROR':
+          console.error(`[TV] Backend error: ${data.message}`);
+          break;
 
-        const fetchLyrics = async (lang: string | null, isPrimary = false): Promise<LyricLine[]> => {
-          if (!lang) return [];
+        case 'LOAD_SONG':
+          const song: SongConfig = data.song;
+          console.log(`[TV] Loading song: ${song.title} (${song.id})`);
+          setCurrentSong(song);
+          setScore(0);
+          setPlayers(data.players || []);
+          setIsMultiplayer(data.is_multiplayer || false);
 
-          if (data.song.lyrics) {
-            const match = data.song.lyrics.find((l: any) => l.language === lang && l.content);
-            if (match) return parseLRC(match.content);
+          const rawSelection = data.song.lyricSelection || {};
+          const primaryLang = rawSelection.primary || song.language || 'en';
+          const secondaryLang = rawSelection.secondary || null;
+          const tertiaryLang = rawSelection.tertiary || null;
+
+          const fetchLyrics = async (lang: string | null, isPrimary = false): Promise<LyricLine[]> => {
+            if (!lang) return [];
+
+            if (data.song.lyrics) {
+              const match = data.song.lyrics.find((l: any) => l.language === lang && l.content);
+              if (match) return parseLRC(match.content);
+            }
+
+            if (isPrimary && data.song.lrc_content) return parseLRC(data.song.lrc_content);
+
+            const url = isPrimary ? resolveUrl(song.lrc_url) : resolveUrl(`${song.base_url}/lyrics_${lang}.lrc`);
+            try {
+              const resp = await fetch(url);
+              const contentType = resp.headers.get('content-type') || '';
+              if (resp.ok && !contentType.includes('text/html')) {
+                return parseLRC(await resp.text());
+              }
+            } catch (e) {
+              console.warn(`[TV] Failed to fetch lyrics for ${lang}:`, e);
+            }
+            return [];
+          };
+
+          const [pLrc, sLrc, tLrc] = await Promise.all([
+            fetchLyrics(primaryLang, true),
+            fetchLyrics(secondaryLang),
+            fetchLyrics(tertiaryLang)
+          ]);
+
+          setLyrics(pLrc);
+          setSecLyrics(sLrc);
+          setTerLyrics(tLrc);
+
+          const resolvedBaseUrl = resolveUrl(song.base_url);
+          console.log(`[TV] Loading audio stems from: ${resolvedBaseUrl}`);
+          await loadStems(resolvedBaseUrl, song.stems);
+
+          if (playCommandQueuedRef.current) {
+            console.log('[TV] Executing queued PLAY command after load');
+            await play();
+            playCommandQueuedRef.current = false;
           }
+          break;
 
-          if (isPrimary && data.song.lrc_content) return parseLRC(data.song.lrc_content);
+        case 'PLAY':
+          if (!isLoadedRef.current) {
+            console.log('[TV] PLAY command received while loading, queueing...');
+            playCommandQueuedRef.current = true;
+          } else {
+            console.log('[TV] Playing...');
+            await play();
+          }
+          break;
 
-          const url = isPrimary ? resolveUrl(song.lrc_url) : resolveUrl(`${song.base_url}/lyrics_${lang}.lrc`);
-          try {
-            const resp = await fetch(url);
-            if (resp.ok) return parseLRC(await resp.text());
-          } catch (e) { }
-          return [];
-        };
+        case 'PAUSE':
+          console.log('[TV] Pausing...');
+          await pause();
+          break;
 
-        const [pLrc, sLrc, tLrc] = await Promise.all([
-          fetchLyrics(primaryLang, true),
-          fetchLyrics(secondaryLang),
-          fetchLyrics(tertiaryLang)
-        ]);
+        case 'SEEK':
+          console.log(`[TV] Seeking to: ${data.position}s`);
+          await seek(data.position * 1000);
+          break;
 
-        setLyrics(pLrc);
-        setSecLyrics(sLrc);
-        setTerLyrics(tLrc);
+        case 'SET_STEM_VOLUME':
+          await setStemVolume(data.stem, data.volume);
+          break;
 
-        const resolvedBaseUrl = resolveUrl(song.base_url);
-        await loadStems(resolvedBaseUrl, song.stems);
+        case 'SET_STEM_ENABLED':
+          await setStemEnabled(data.stem, data.enabled, 1.0);
+          break;
 
-        if (playCommandQueued) {
-          await play();
-          setPlayCommandQueued(false);
-        }
-        break;
+        case 'SET_VIDEO_ENABLED':
+          setVideoEnabled(data.enabled);
+          break;
 
-      case 'PLAY':
-        if (!isLoaded) setPlayCommandQueued(true);
-        else await play();
-        break;
+        case 'SET_ACCENT_COLOR':
+          setAccentColor(data.color);
+          break;
 
-      case 'PAUSE':
-        await pause();
-        break;
+        case 'UPDATE_AUDIO_SETTINGS':
+          setAudioSettings(prev => ({ ...prev, ...data }));
+          break;
 
-      case 'SEEK':
-        await seek(data.position * 1000);
-        break;
-
-      case 'SET_STEM_VOLUME':
-        await setStemVolume(data.stem, data.volume);
-        break;
-
-      case 'SET_STEM_ENABLED':
-        await setStemEnabled(data.stem, data.enabled, 1.0);
-        break;
-
-      case 'SET_VIDEO_ENABLED':
-        setVideoEnabled(data.enabled);
-        break;
-
-      case 'SET_ACCENT_COLOR':
-        setAccentColor(data.color);
-        break;
-
-      case 'UPDATE_AUDIO_SETTINGS':
-        setAudioSettings(prev => ({ ...prev, ...data }));
-        break;
-
-      case 'SESSION_RESET':
-        await pause();
-        setCurrentSong(null);
-        setLyrics([]);
-        setSecLyrics([]);
-        setTerLyrics([]);
-        setScore(0);
-        setPlayers([]);
-        setIsMultiplayer(false);
-        break;
+        case 'SESSION_RESET':
+          console.log('[TV] Session reset');
+          await pause();
+          setCurrentSong(null);
+          setLyrics([]);
+          setSecLyrics([]);
+          setTerLyrics([]);
+          setScore(0);
+          setPlayers([]);
+          setIsMultiplayer(false);
+          break;
+      }
+    } catch (err) {
+      console.error('[TV] Error in handleMessage:', err);
     }
-  }, [isLoaded, playCommandQueued, loadStems, play, pause, seek, setStemVolume, setStemEnabled]);
+  }, [loadStems, play, pause, seek, setStemVolume, setStemEnabled]);
 
   useEffect(() => {
     if (!deviceId) return;
@@ -230,7 +265,7 @@ export default function App() {
     console.log('[TV] Initializing WebSocket:', WS_URL);
 
     // Initialize with a dummy handler, it will be updated by the next useEffect
-    const ws = new WebSocketService(WS_URL, () => { }, setWsStatus);
+    const ws = new WebSocketService(WS_URL, handleMessage, setWsStatus);
     wsRef.current = ws;
     ws.connect();
 
@@ -239,23 +274,16 @@ export default function App() {
       ws.disconnect();
       wsRef.current = null;
     };
-  }, [deviceId]);
+  }, [deviceId, handleMessage]);
 
-  useEffect(() => {
-    if (wsRef.current) {
-      console.log('[TV] Updating WebSocket message handler');
-      wsRef.current.setMessageHandler(handleMessage);
-    }
-  }, [handleMessage]);
 
   const handleDeviceReady = (id: string) => {
     setDeviceId(id);
   };
 
   return (
-    <div className="relative w-full h-full overflow-hidden text-white font-sans selection:bg-cyan-500/30">
-      <SessionOverlay onSessionActive={setSessionId} onDeviceReady={handleDeviceReady} />
-
+    <div className="w-full h-full overflow-hidden text-white font-sans flex flex-col">
+      {/* Background (fills full screen behind everything) */}
       <BackgroundVideo
         apiUrl={API_BASE_URL}
         playing={isPlaying}
@@ -266,58 +294,85 @@ export default function App() {
         accentColor={accentColor}
       />
 
-      {/* Header */}
-      <div className="absolute top-0 left-0 right-0 p-8 flex justify-between items-center z-10 transition-all duration-500">
-        <div className="flex items-center gap-6">
-          <div className="flex items-center gap-2.5 px-3 py-1 bg-white/5 rounded-2xl border border-white/10">
-            <div className={`w-1.5 h-1.5 rounded-full ${wsStatus === 'connected' ? 'bg-green-500 shadow-[0_0_8px_#22c55e]' : wsStatus === 'error' ? 'bg-red-500' : 'bg-yellow-500 animate-pulse'}`} />
-            <span className="text-[10px] font-black font-orbitron tracking-tighter text-sky-400">{ROOM_ID}</span>
-            {wsStatus !== 'connected' && <span className="text-[10px] text-yellow-500 font-bold ml-2">RECONNECTING...</span>}
-          </div>
+      {/* Session overlay (QR code, fixed top-left) */}
+      <SessionOverlay onSessionActive={setSessionId} onDeviceReady={handleDeviceReady} />
 
-          <div className="flex flex-col">
-            <h1 className="text-2xl font-black font-orbitron uppercase tracking-widest text-white shadow-black drop-shadow-lg leading-tight">
-              {currentSong?.title || 'Waiting for song...'}
-            </h1>
-            <p className="text-sm font-medium font-orbitron text-white/40 tracking-wide mt-0.5">
-              {currentSong?.artist || ''}
-            </p>
+      {/* ── TOP HEADER BAR ── */}
+      <div className="relative z-10 grid grid-cols-3 items-center px-6 py-4 bg-gradient-to-b from-black/80 to-transparent">
+        {/* LEFT: Room status */}
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 px-3 py-1.5 bg-white/5 rounded-xl border border-white/10 backdrop-blur-md">
+            <div className={`w-2 h-2 rounded-full ${wsStatus === 'connected' ? 'bg-green-400 shadow-[0_0_8px_#4ade80]' : wsStatus === 'error' ? 'bg-red-500' : 'bg-yellow-400 animate-pulse'}`} />
+            <span className="text-[11px] font-black font-orbitron tracking-wider text-sky-400 uppercase">{ROOM_ID}</span>
           </div>
-
-          {isMultiplayer && players.length > 0 && (
-            <div className="ml-4 px-3 py-1 bg-cyan-500/10 rounded-lg border border-cyan-500/20">
-              <span className="text-xs font-black font-orbitron text-cyan-400 uppercase tracking-wider">{players.join(' & ')}</span>
-            </div>
+          {wsStatus !== 'connected' && (
+            <span className="text-[10px] text-yellow-400 font-bold animate-pulse tracking-tighter">RECONNECTING...</span>
           )}
         </div>
 
-        <div className="flex items-center gap-6">
-          <MicStatus
-            isSinging={isSinging}
-            micLevel={micLevel}
-            permissionStatus="granted" // Browser handles this
-            onRetry={requestPermission}
-          />
-          <div className="flex flex-col items-end px-4 py-2 bg-black/40 rounded-2xl border-2 transition-all duration-500" style={{ borderColor: accentColor }}>
-            <span className="text-[10px] font-black font-orbitron tracking-widest" style={{ color: accentColor }}>SCORE</span>
-            <span className="text-4xl font-black font-orbitron leading-none mt-1" style={{ color: accentColor, textShadow: `0 0 12px ${accentColor}80` }}>{score}</span>
+        {/* CENTER: Song info (Prominent) */}
+        <div className="flex flex-col items-center text-center">
+          {currentSong ? (
+            <>
+              <h1 className="text-[28px] font-black font-orbitron uppercase tracking-[0.2em] text-white drop-shadow-[0_2px_10px_rgba(0,0,0,0.8)] leading-tight max-w-[600px] truncate">
+                {currentSong.title}
+              </h1>
+              <div className="flex items-center gap-3 mt-1">
+                <p className="text-sm font-semibold text-white/60 tracking-[0.15em] uppercase border-r border-white/20 pr-3">
+                  {currentSong.artist}
+                </p>
+                {isMultiplayer && players.length > 0 && (
+                  <span className="text-[10px] font-black font-orbitron text-cyan-400 uppercase tracking-widest bg-cyan-500/10 px-2 py-0.5 rounded border border-cyan-500/20">
+                    {players.join(' & ')}
+                  </span>
+                )}
+              </div>
+            </>
+          ) : (
+            <h1 className="text-xl font-black font-orbitron uppercase tracking-[0.3em] text-white/30 animate-pulse">
+              Waiting for song...
+            </h1>
+          )}
+        </div>
+
+        {/* RIGHT: Score */}
+        <div className="flex justify-end">
+          <div className="flex flex-col items-end px-5 py-2 bg-black/40 rounded-2xl border border-white/10 backdrop-blur-md transition-all duration-500" style={{ borderColor: accentColor + '40' }}>
+            <span className="text-[9px] font-black font-orbitron tracking-[3px] mb-0.5" style={{ color: accentColor }}>SCORE</span>
+            <span className="text-5xl font-black font-orbitron leading-none tabular-nums" style={{ color: accentColor, textShadow: `0 0 20px ${accentColor}80` }}>
+              {score}
+            </span>
           </div>
         </div>
       </div>
 
-      {/* Main Content (Lyrics) */}
-      <div className="flex-1 flex flex-col justify-center items-center h-full">
-        <LyricRenderer
-          primaryLyrics={lyrics}
-          secondaryLyrics={secLyrics}
-          tertiaryLyrics={terLyrics}
-          currentPosition={position}
-        />
+      {/* ── MAIN CONTENT AREA ── */}
+      {/* Side-by-side: lyrics (takes up all available width minus scoring bar) */}
+      <div className="relative z-10 flex flex-1 min-h-0">
+        {/* Lyrics — centered in main area */}
+        <div className="flex-1 flex flex-col items-center justify-center min-w-0">
+          <LyricRenderer
+            primaryLyrics={lyrics}
+            secondaryLyrics={secLyrics}
+            tertiaryLyrics={terLyrics}
+            currentPosition={position}
+          />
+        </div>
+
+        {/* Scoring bar — fixed right strip, does NOT overlap lyrics */}
+        <div className="flex flex-col items-center justify-center w-16 px-1 py-8 flex-shrink-0">
+          <ScoringBar score={score} accentColor={accentColor} />
+        </div>
       </div>
 
-      {/* Right Sidebar (Scoring Bar) */}
-      <div className="absolute right-6 top-[20%] bottom-[20%] flex items-center justify-center opacity-90 z-10 transition-all duration-700">
-        <ScoringBar score={score} accentColor={accentColor} />
+      {/* ── BOTTOM BAR ── */}
+      <div className="relative z-10 flex items-center justify-end px-6 py-3 bg-gradient-to-t from-black/70 to-transparent">
+        <MicStatus
+          isSinging={isSinging}
+          micLevel={micLevel}
+          permissionStatus="granted"
+          onRetry={requestPermission}
+        />
       </div>
     </div>
   );

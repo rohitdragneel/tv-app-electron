@@ -42,14 +42,9 @@ export const parseLRC = (lrcContent: string): LyricLine[] => {
     }
 
     if (rawEntries.length === 0) {
-        const plainLines = lines
-            .map(l => l.replace(/\[\d{2}:\d{2}[:.]\d{2,3}\]/g, '').trim())
-            .filter(l => l.length > 0);
-
-        return plainLines.map((text, i) => ({
-            time: i * 4000,
-            text
-        }));
+        // No timestamps found — content is not a valid LRC file (could be a 404 HTML page).
+        // Return empty array so we don't render HTML/error content as lyrics.
+        return [];
     }
 
     rawEntries.sort((a, b) => a.time - b.time);

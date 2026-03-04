@@ -102,7 +102,7 @@ export const BackgroundVideo: React.FC<BackgroundVideoProps> = ({
 
     if (!videoEnabled) {
         return (
-            <div className="absolute inset-0 z-0 overflow-hidden bg-[#0a0a0a]">
+            <div className="fixed inset-0 z-0 overflow-hidden bg-[#0a0a0a]">
                 <div
                     className="absolute inset-0 flex flex-col items-center justify-center"
                     style={{
@@ -135,11 +135,11 @@ export const BackgroundVideo: React.FC<BackgroundVideoProps> = ({
     }
 
     if (isLoading || videos.length === 0 || !url) {
-        return <div className="absolute inset-0 z-0 bg-black" />;
+        return <div className="fixed inset-0 z-0 bg-black" />;
     }
 
     return (
-        <div className="absolute inset-0 z-0 overflow-hidden bg-black">
+        <div className="fixed inset-0 z-0 overflow-hidden bg-black">
             <video
                 ref={videoRef}
                 src={url}
