@@ -127,7 +127,7 @@ export const BackgroundVideo: React.FC<BackgroundVideoProps> = ({
         const imgEntry = BACKGROUND_IMAGES.find(b => b.id === backgroundImage);
         const imgSrc = imgEntry?.src || backgroundImage;
         return (
-            <div className="fixed inset-0 z-0 overflow-hidden bg-black">
+            <div className="fixed inset-0 z-0 overflow-hidden bg-black w-screen h-screen">
                 <img
                     src={imgSrc}
                     alt="Background"
@@ -146,7 +146,7 @@ export const BackgroundVideo: React.FC<BackgroundVideoProps> = ({
     // ── Video disabled fallback ──
     if (!videoEnabled || backgroundMode !== 'video') {
         return (
-            <div className="fixed inset-0 z-0 overflow-hidden bg-[#0a0a0a]">
+            <div className="fixed inset-0 z-0 overflow-hidden bg-[#0a0a0a] w-screen h-screen">
                 <div
                     className="absolute inset-0 flex flex-col items-center justify-center"
                     style={{
@@ -181,7 +181,7 @@ export const BackgroundVideo: React.FC<BackgroundVideoProps> = ({
     }
 
     return (
-        <div className="fixed inset-0 z-0 overflow-hidden bg-black">
+        <div className="fixed inset-0 z-0 overflow-hidden bg-black w-screen h-screen">
             <video
                 ref={videoRef}
                 src={url}

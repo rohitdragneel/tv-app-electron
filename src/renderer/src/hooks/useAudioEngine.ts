@@ -43,6 +43,7 @@ export const useAudioEngine = ({
     const mediaRecorderRef = useRef<MediaRecorder | null>(null);
     const recordedChunksRef = useRef<Blob[]>([]);
     const analyserRef = useRef<AnalyserNode | null>(null);
+    const masterDestinationRef = useRef<MediaStreamAudioDestinationNode | null>(null);
 
     const vocalHelpEnabledRef = useRef(vocalHelpEnabled);
     const vocalHelpDurationRef = useRef(vocalHelpDuration);
@@ -55,7 +56,9 @@ export const useAudioEngine = ({
 
     const initAudioContext = () => {
         if (!audioContextRef.current) {
-            audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
+            const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+            audioContextRef.current = ctx;
+            masterDestinationRef.current = ctx.createMediaStreamDestination();
         }
         return audioContextRef.current;
     };
@@ -87,6 +90,9 @@ export const useAudioEngine = ({
                 const gainNode = ctx.createGain();
                 gainNode.gain.value = stemsConfig[key].enabled ? stemsConfig[key].volume : 0;
                 gainNode.connect(ctx.destination);
+                if (masterDestinationRef.current) {
+                    gainNode.connect(masterDestinationRef.current);
+                }
 
                 userMutedRef.current[key] = !stemsConfig[key].enabled;
 
@@ -120,6 +126,12 @@ export const useAudioEngine = ({
     const play = useCallback(async () => {
         const ctx = initAudioContext();
         if (ctx.state === 'suspended') await ctx.resume();
+
+        // Ensure mic is connected to master destination if active
+        if (micStreamRef.current && masterDestinationRef.current) {
+            const micSource = ctx.createMediaStreamSource(micStreamRef.current);
+            micSource.connect(masterDestinationRef.current);
+        }
 
         const offset = pauseTimeRef.current;
         const startTime = ctx.currentTime;
@@ -283,6 +295,7 @@ export const useAudioEngine = ({
         setStemEnabled,
         isSinging,
         micLevel,
+        getMixedAudioStream: () => masterDestinationRef.current?.stream || null,
         requestPermission: async () => true // Browser handles this
     };
 };

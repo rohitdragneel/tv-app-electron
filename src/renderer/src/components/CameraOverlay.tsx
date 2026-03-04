@@ -131,7 +131,7 @@ export const CameraOverlay: React.FC<CameraOverlayProps> = ({ enabled, backgroun
     // Mode: full camera background (camera or none)
     if (backgroundMode === 'camera') {
         return (
-            <div className="fixed inset-0 z-0">
+            <div className="fixed inset-0 z-0 w-screen h-screen">
                 <video
                     ref={videoRef}
                     autoPlay
@@ -157,7 +157,7 @@ export const CameraOverlay: React.FC<CameraOverlayProps> = ({ enabled, backgroun
                     className="hidden"
                 />
                 {/* Canvas shows only the person, layered above background */}
-                <div className="fixed inset-0 z-5 pointer-events-none" style={{ zIndex: 5 }}>
+                <div className="fixed inset-0 z-5 pointer-events-none w-screen h-screen" style={{ zIndex: 5 }}>
                     {useSegmentation ? (
                         <canvas
                             ref={canvasRef}

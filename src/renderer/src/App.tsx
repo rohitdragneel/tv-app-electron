@@ -41,6 +41,7 @@ export default function App() {
   const [cameraEnabled, setCameraEnabled] = useState(false);
   const [backgroundMode, setBackgroundMode] = useState<BackgroundMode>('video');
   const [backgroundImage, setBackgroundImage] = useState<string | null>(null);
+  const [isSessionRecording, setIsSessionRecording] = useState(false);
 
   const positionRef = useRef(0);
   const isPlayingRef = useRef(false);
@@ -49,6 +50,9 @@ export default function App() {
   const isLoadedRef = useRef(false);
   const scoreRef = useRef(0);
   const playCommandQueuedRef = useRef(false);
+  const sessionRecorderRef = useRef<MediaRecorder | null>(null);
+  const sessionChunksRef = useRef<Blob[]>([]);
+  const screenStreamRef = useRef<MediaStream | null>(null);
 
   const handleRecordingComplete = useCallback(async (blobUrl: string) => {
     if (!currentSong) return;
@@ -97,6 +101,7 @@ export default function App() {
     setStemEnabled,
     isSinging,
     micLevel,
+    getMixedAudioStream,
     requestPermission
   } = useAudioEngine({
     onPositionUpdate: setPosition,
@@ -250,6 +255,14 @@ export default function App() {
           setBackgroundImage(data.image);
           break;
 
+        case 'START_RECORDING':
+          startSessionRecording();
+          break;
+
+        case 'STOP_RECORDING':
+          stopSessionRecording();
+          break;
+
         case 'SET_ACCENT_COLOR':
           setAccentColor(data.color);
           break;
@@ -259,7 +272,8 @@ export default function App() {
           break;
 
         case 'SESSION_RESET':
-          console.log('[TV] Session reset');
+        case 'SESSION_ENDED':
+          console.log(`[TV] Session ${data.type}`);
           await pause();
           setCurrentSong(null);
           setLyrics([]);
@@ -268,12 +282,89 @@ export default function App() {
           setScore(0);
           setPlayers([]);
           setIsMultiplayer(false);
+          setSessionId(null);
           break;
       }
     } catch (err) {
       console.error('[TV] Error in handleMessage:', err);
     }
   }, [loadStems, play, pause, seek, setStemVolume, setStemEnabled]);
+
+  const startSessionRecording = useCallback(async () => {
+    if (isSessionRecording) return;
+    console.log('[TV] Starting session recording...');
+    try {
+      // 1. Capture Screen
+      const screenStream = await navigator.mediaDevices.getDisplayMedia({
+        video: { frameRate: 30 },
+        audio: false // We use AudioContext stream for audio
+      });
+      screenStreamRef.current = screenStream;
+
+      // 2. Get Mixed Audio
+      const audioStream = getMixedAudioStream();
+
+      // 3. Combine
+      const tracks = [...screenStream.getVideoTracks()];
+      if (audioStream) tracks.push(...audioStream.getAudioTracks());
+
+      const combinedStream = new MediaStream(tracks);
+
+      // 4. Record
+      const recorder = new MediaRecorder(combinedStream, { mimeType: 'video/webm;codecs=vp8,opus' });
+      sessionRecorderRef.current = recorder;
+      sessionChunksRef.current = [];
+
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) sessionChunksRef.current.push(e.data);
+      };
+
+      recorder.onstop = async () => {
+        console.log('[TV] Session recording stopped, preparing upload...');
+        const blob = new Blob(sessionChunksRef.current, { type: 'video/webm' });
+
+        // Stop all tracks
+        screenStream.getTracks().forEach(t => t.stop());
+        screenStreamRef.current = null;
+
+        // Upload to backend
+        const formData = new FormData();
+        formData.append('file', blob, 'session_recording.webm');
+        formData.append('session_id', sessionId?.toString() || '');
+        formData.append('song_id', currentSong?.id || '');
+
+        try {
+          const resp = await fetch(`${API_BASE_URL}/recordings/upload`, {
+            method: 'POST',
+            body: formData,
+          });
+          const result = await resp.json();
+          console.log('[TV] Recording upload successful:', result);
+
+          // Notify backend via WS that a new recording is ready
+          wsRef.current?.send({
+            type: 'RECORDING_READY',
+            sessionId,
+            recording: result
+          });
+        } catch (err) {
+          console.error('[TV] Recording upload failed:', err);
+        }
+      };
+
+      recorder.start();
+      setIsSessionRecording(true);
+    } catch (err) {
+      console.error('[TV] Failed to start recording:', err);
+    }
+  }, [isSessionRecording, getMixedAudioStream, sessionId, currentSong]);
+
+  const stopSessionRecording = useCallback(() => {
+    if (!isSessionRecording || !sessionRecorderRef.current) return;
+    console.log('[TV] Stopping session recording...');
+    sessionRecorderRef.current.stop();
+    setIsSessionRecording(false);
+  }, [isSessionRecording]);
 
   useEffect(() => {
     if (!deviceId) return;
